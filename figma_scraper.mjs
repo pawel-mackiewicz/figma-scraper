@@ -3,10 +3,6 @@
 /**
  * Export a Figma/FigJam board to one compact JSON file for an LLM.
  *
- * Usage:
- *   node figma_scraper.mjs "FIGMA_URL" "FIGMA_ACCESS_TOKEN"
- *
- * Safer token usage:
  *   FIGMA_TOKEN="figd_..." node figma_scraper.mjs "FIGMA_URL"
  *
  * Requirements:

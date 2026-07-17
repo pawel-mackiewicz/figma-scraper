@@ -35,7 +35,7 @@ By default, output goes to `<figma-file-name>-llm.json`. Use `--out <file>` to p
 - Figma access token with `file_content:read` permission
 
 ## Notes
-Figma restrict to 6 API calls/month/account - I just create temp accounts to use this script. It takes about 5 minutes.
+Figma restrict to 6 API calls/month/account - I just create temp Figma accounts to use this script. 
 
 Vibe-Coded. WOMM.
 
