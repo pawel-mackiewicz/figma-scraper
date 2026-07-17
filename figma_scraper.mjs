@@ -4,10 +4,10 @@
  * Export a Figma/FigJam board to one compact JSON file for an LLM.
  *
  * Usage:
- *   node figma-to-llm.mjs "FIGMA_URL" "FIGMA_ACCESS_TOKEN"
+ *   node figma_scraper.mjs "FIGMA_URL" "FIGMA_ACCESS_TOKEN"
  *
  * Safer token usage:
- *   FIGMA_TOKEN="figd_..." node figma-to-llm.mjs "FIGMA_URL"
+ *   FIGMA_TOKEN="figd_..." node figma_scraper.mjs "FIGMA_URL"
  *
  * Requirements:
  *   Node.js 20+
@@ -34,11 +34,75 @@ const OMITTED_KEYS = new Set([
 function usage() {
   console.error(`
 Usage:
-  node figma-to-llm.mjs "FIGMA_URL" "FIGMA_ACCESS_TOKEN"
+  node figma_scraper.mjs "FIGMA_URL" "FIGMA_ACCESS_TOKEN"
 
 Or keep the token out of shell history:
-  FIGMA_TOKEN="figd_..." node figma-to-llm.mjs "FIGMA_URL"
+  FIGMA_TOKEN="figd_..." node figma_scraper.mjs "FIGMA_URL"
+
+Options:
+  --out <file>                 Write JSON to a specific file.
+  --include-variable-aliases  Include VARIABLE_ALIAS objects, omitted by default.
 `);
+}
+
+function parseCliArgs(argv, env = process.env) {
+  const positional = [];
+  const options = {
+    help: false,
+    includeVariableAliases: false,
+    out: null,
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === '--out') {
+      options.out = argv[index + 1];
+
+      if (!options.out || options.out.startsWith('--')) {
+        throw new Error('Expected a file path after --out.');
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (arg.startsWith('--out=')) {
+      options.out = arg.slice('--out='.length);
+
+      if (!options.out) {
+        throw new Error('Expected a file path after --out=.');
+      }
+
+      continue;
+    }
+
+    if (arg === '--include-variable-aliases') {
+      options.includeVariableAliases = true;
+      continue;
+    }
+
+    if (arg === '--help' || arg === '-h') {
+      options.help = true;
+      continue;
+    }
+
+    if (arg.startsWith('--')) {
+      throw new Error(`Unknown option: ${arg}`);
+    }
+
+    positional.push(arg);
+  }
+
+  if (positional.length > 2) {
+    throw new Error('Expected a Figma URL and optional access token.');
+  }
+
+  return {
+    figmaUrl: positional[0],
+    token: positional[1] || env.FIGMA_TOKEN,
+    ...options,
+  };
 }
 
 function parseFigmaUrl(input) {
@@ -180,8 +244,21 @@ function roundNumber(value) {
   return Math.round(value * 1000) / 1000;
 }
 
-function compactValue(value, key = '', imageUrls = {}) {
+function isVariableAlias(value) {
+  return (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    value.type === 'VARIABLE_ALIAS'
+  );
+}
+
+function compactValue(value, key = '', imageUrls = {}, options = {}) {
   if (value === null || value === undefined || OMITTED_KEYS.has(key)) {
+    return undefined;
+  }
+
+  if (!options.includeVariableAliases && isVariableAlias(value)) {
     return undefined;
   }
 
@@ -195,7 +272,7 @@ function compactValue(value, key = '', imageUrls = {}) {
 
   if (Array.isArray(value)) {
     const items = value
-      .map((item) => compactValue(item, '', imageUrls))
+      .map((item) => compactValue(item, '', imageUrls, options))
       .filter((item) => item !== undefined);
 
     return items.length ? items : undefined;
@@ -208,7 +285,7 @@ function compactValue(value, key = '', imageUrls = {}) {
       continue;
     }
 
-    const compacted = compactValue(childValue, childKey, imageUrls);
+    const compacted = compactValue(childValue, childKey, imageUrls, options);
 
     if (compacted !== undefined && compacted !== '') {
       result[childKey] = compacted;
@@ -226,7 +303,7 @@ function compactValue(value, key = '', imageUrls = {}) {
   return Object.keys(result).length ? result : undefined;
 }
 
-function compactNode(node, parentPath, imageUrls) {
+function compactNode(node, parentPath, imageUrls, options) {
   if (!node || typeof node !== 'object') {
     return null;
   }
@@ -235,13 +312,13 @@ function compactNode(node, parentPath, imageUrls) {
 
   const path = parentPath ? `${parentPath}/${nodeName}` : nodeName;
 
-  const compacted = compactValue(node, '', imageUrls) || {};
+  const compacted = compactValue(node, '', imageUrls, options) || {};
 
   compacted.path = path;
 
   if (Array.isArray(node.children) && node.children.length) {
     compacted.children = node.children
-      .map((child) => compactNode(child, path, imageUrls))
+      .map((child) => compactNode(child, path, imageUrls, options))
       .filter(Boolean);
   }
 
@@ -390,13 +467,13 @@ async function main() {
     throw new Error('This script requires Node.js 20 or newer.');
   }
 
-  const figmaUrl = process.argv[2];
+  const { figmaUrl, token, help, includeVariableAliases, out } = parseCliArgs(
+    process.argv.slice(2),
+  );
 
-  const token = process.argv[3] || process.env.FIGMA_TOKEN;
-
-  if (!figmaUrl || !token) {
+  if (help || !figmaUrl || !token) {
     usage();
-    process.exitCode = 1;
+    process.exitCode = help ? 0 : 1;
     return;
   }
 
@@ -446,7 +523,16 @@ async function main() {
 
   const imageUrls = imageFillData?.images || {};
 
-  const compactDocument = compactNode(fileData.document, '', imageUrls);
+  const compactOptions = {
+    includeVariableAliases,
+  };
+
+  const compactDocument = compactNode(
+    fileData.document,
+    '',
+    imageUrls,
+    compactOptions,
+  );
 
   const nodeCount = countNodes(compactDocument);
 
@@ -519,12 +605,20 @@ async function main() {
 
     designTokens: tokens,
 
-    components: compactValue(fileData.components || {}, '', imageUrls) || {},
+    components:
+      compactValue(fileData.components || {}, '', imageUrls, compactOptions) ||
+      {},
 
     componentSets:
-      compactValue(fileData.componentSets || {}, '', imageUrls) || {},
+      compactValue(
+        fileData.componentSets || {},
+        '',
+        imageUrls,
+        compactOptions,
+      ) || {},
 
-    styles: compactValue(fileData.styles || {}, '', imageUrls) || {},
+    styles:
+      compactValue(fileData.styles || {}, '', imageUrls, compactOptions) || {},
 
     assets: {
       imageFillsByRef: imageUrls,
@@ -535,7 +629,7 @@ async function main() {
     document: compactDocument,
   };
 
-  const filename = `${sanitizeFilename(fileData.name)}-llm.json`;
+  const filename = out || `${sanitizeFilename(fileData.name)}-llm.json`;
 
   await writeFile(filename, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
 
